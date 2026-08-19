@@ -92,12 +92,24 @@ export default function ContratoSection({
     try {
       const blob = await gerarBlobDoContrato(contrato);
       const nome = nomeArquivoPdf(contrato.numero, evento.cliente);
-      const resultado = await compartilharArquivo(blob, nome, `Contrato ${contrato.numero}`);
-      if (resultado === "indisponivel") {
+      const resultado = await compartilharArquivo(
+        blob,
+        nome,
+        `Contrato ${contrato.numero}`,
+        `Contrato ${contrato.numero} — ${evento.cliente}`
+      );
+
+      if (resultado === "cancelado") {
+        // usuário fechou a folha de compartilhamento — não é erro, não faz nada
+      } else if (resultado === "indisponivel") {
+        // navegador não suporta compartilhar arquivo — cai para baixar, sem alarme
+        baixarArquivo(blob, nome);
+      } else if (resultado === "erro") {
+        setErro("Não foi possível compartilhar o PDF. Você pode abrir ou baixar o contrato.");
         baixarArquivo(blob, nome);
       }
     } catch {
-      setErro("Não foi possível compartilhar o contrato.");
+      setErro("Não foi possível preparar o PDF para compartilhar. Você pode abrir ou baixar o contrato.");
     } finally {
       setCarregando(null);
     }
