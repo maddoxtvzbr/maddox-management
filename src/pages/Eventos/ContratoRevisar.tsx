@@ -88,6 +88,7 @@ export default function ContratoRevisar({
     try {
       const foroFinal = foro.trim() || FORO_PADRAO;
       const contrato = await gerarOuAtualizarContrato(evento.id, snapshot, autorizaImagem, foroFinal);
+
       const blob = await gerarContratoPdfBlob({
         numero: contrato.numero,
         snapshot: contrato.snapshot,
@@ -95,18 +96,20 @@ export default function ContratoRevisar({
         foro: contrato.foro,
         contratado: montarDadosContratado(perfil)
       });
+
+      // O upload precisa dar certo — sem arquivo salvo no Storage, o
+      // contrato não deve ser tratado como pronto para visualizar/compartilhar.
+      const path = await enviarContratoOriginal(evento.id, contrato.id, blob);
+      await salvarCaminhoOriginal(evento.id, path);
+      // eslint-disable-next-line no-console
+      console.log("[PDF] PDF_PATH_SAVED", { path });
+
       abrirArquivoEmNovaAba(blob);
-
-      try {
-        const path = await enviarContratoOriginal(evento.id, contrato.id, blob);
-        await salvarCaminhoOriginal(evento.id, path);
-      } catch (uploadErr) {
-        console.error("[ContratoRevisar] Falha ao salvar cópia no Storage", uploadErr);
-      }
-
       onGerado(contrato);
-    } catch {
-      setErro("Não foi possível gerar o contrato. Tente novamente.");
+    } catch (error) {
+      console.error("[PDF] Falha ao gerar contrato", error);
+      setErro("Não foi possível gerar o contrato. Verifique sua conexão e tente novamente.");
+    } finally {
       setCarregando(null);
     }
   }
