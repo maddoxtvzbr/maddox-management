@@ -13,7 +13,12 @@ import {
 import { gerarOuAtualizarContrato, removerAssinatura, salvarCaminhoOriginal } from "../../data/contratosRepository";
 import { getPerfil } from "../../data/perfilRepository";
 import { montarDadosContratado, perfilCompletoParaContrato } from "../../config/contratado";
-import { enviarContratoOriginal, gerarUrlAssinada, removerArquivo } from "../../lib/storageSupabase";
+import {
+  enviarContratoOriginal,
+  baixarArquivoDoStorage,
+  gerarUrlAssinada,
+  removerArquivo
+} from "../../lib/storageSupabase";
 import ConfirmSheet from "../../components/ConfirmSheet";
 
 interface ContratoSectionProps {
@@ -29,6 +34,8 @@ interface ContratoSectionProps {
 
 const statusLabel = { gerado: "Gerado", assinado: "Assinado" } as const;
 const statusClass = { gerado: "aberto", assinado: "fechado" } as const;
+
+const MSG_ARQUIVO_NAO_ENCONTRADO = "Arquivo PDF não encontrado. Gere o contrato novamente.";
 
 function nomeArquivoPdf(numero: string, cliente: string): string {
   return `Contrato_MADDOX_${numero}_${sanitizarNomeArquivo(cliente)}.pdf`;
@@ -61,6 +68,8 @@ export default function ContratoSection({
   const faltandoEvento = validarDadosContrato(evento);
   const perfilCompleto = perfilCompletoParaContrato(perfil);
 
+  // Usado apenas para (re)gerar o PDF do zero — nunca para simplesmente
+  // visualizar/compartilhar um contrato já existente (isso baixa do Storage).
   async function gerarBlobDoContrato(c: Contrato) {
     return gerarContratoPdfBlob({
       numero: c.numero,
@@ -71,15 +80,37 @@ export default function ContratoSection({
     });
   }
 
+  // Busca o PDF já salvo no Storage privado (nunca regenera via pdfmake) —
+  // isso garante que Visualizar/Compartilhar nunca dependam da geração do
+  // PDF funcionar de novo, e sempre mostrem exatamente o arquivo que foi
+  // gerado e conferido da última vez.
+  async function obterBlobSalvo(c: Contrato): Promise<Blob> {
+    if (!c.originalFilePath) {
+      throw new Error(MSG_ARQUIVO_NAO_ENCONTRADO);
+    }
+    return baixarArquivoDoStorage(c.originalFilePath);
+  }
+
   async function handleVisualizarOriginal() {
     if (!contrato) return;
     setErro(null);
+
+    if (!contrato.originalFilePath) {
+      setErro(MSG_ARQUIVO_NAO_ENCONTRADO);
+      return;
+    }
+
     setCarregando("visualizar");
     try {
-      const blob = await gerarBlobDoContrato(contrato);
+      const blob = await obterBlobSalvo(contrato);
       abrirArquivoEmNovaAba(blob);
-    } catch {
-      setErro("Não foi possível abrir o contrato.");
+    } catch (error) {
+      console.error("[PDF] Falha ao abrir contrato", error);
+      setErro(
+        error instanceof Error && error.message === MSG_ARQUIVO_NAO_ENCONTRADO
+          ? MSG_ARQUIVO_NAO_ENCONTRADO
+          : "Não foi possível abrir o contrato. Verifique sua conexão e tente novamente."
+      );
     } finally {
       setCarregando(null);
     }
@@ -88,10 +119,19 @@ export default function ContratoSection({
   async function handleCompartilhar() {
     if (!contrato) return;
     setErro(null);
+
+    if (!contrato.originalFilePath) {
+      setErro(MSG_ARQUIVO_NAO_ENCONTRADO);
+      return;
+    }
+
     setCarregando("compartilhar");
     try {
-      const blob = await gerarBlobDoContrato(contrato);
+      const blob = await obterBlobSalvo(contrato);
       const nome = nomeArquivoPdf(contrato.numero, evento.cliente);
+
+      // eslint-disable-next-line no-console
+      console.log("[PDF] PDF_SHARE_START");
       const resultado = await compartilharArquivo(
         blob,
         nome,
@@ -108,8 +148,13 @@ export default function ContratoSection({
         setErro("Não foi possível compartilhar o PDF. Você pode abrir ou baixar o contrato.");
         baixarArquivo(blob, nome);
       }
-    } catch {
-      setErro("Não foi possível preparar o PDF para compartilhar. Você pode abrir ou baixar o contrato.");
+    } catch (error) {
+      console.error("[PDF] Falha ao compartilhar contrato", error);
+      setErro(
+        error instanceof Error && error.message === MSG_ARQUIVO_NAO_ENCONTRADO
+          ? MSG_ARQUIVO_NAO_ENCONTRADO
+          : "Não foi possível preparar o PDF para compartilhar. Verifique sua conexão e tente novamente."
+      );
     } finally {
       setCarregando(null);
     }
@@ -118,7 +163,7 @@ export default function ContratoSection({
   async function handleGerarNovamente() {
     if (!contrato) return;
     const snapshotAtual = construirSnapshotContrato(evento, parcelas);
-    if (!snapshotsIguais(snapshotAtual, contrato.snapshot)) {
+    if (!contrato.originalFilePath || !snapshotsIguais(snapshotAtual, contrato.snapshot)) {
       setConfirmRegenerar(true);
       return;
     }
@@ -127,6 +172,7 @@ export default function ContratoSection({
 
   async function confirmarRegenerar() {
     if (!contrato || carregando) return;
+    setErro(null);
     setCarregando("regenerar");
     try {
       const snapshotAtual = construirSnapshotContrato(evento, parcelas);
@@ -137,16 +183,19 @@ export default function ContratoSection({
         contrato.foro
       );
       const blob = await gerarBlobDoContrato(atualizado);
+
+      // Assim como na primeira geração, o upload precisa dar certo — sem
+      // isso, o contrato fica "gerado" mas sem arquivo válido no Storage.
+      const path = await enviarContratoOriginal(evento.id, atualizado.id, blob);
+      await salvarCaminhoOriginal(evento.id, path);
+      // eslint-disable-next-line no-console
+      console.log("[PDF] PDF_PATH_SAVED", { path });
+
       abrirArquivoEmNovaAba(blob);
-      try {
-        const path = await enviarContratoOriginal(evento.id, atualizado.id, blob);
-        await salvarCaminhoOriginal(evento.id, path);
-      } catch (uploadErr) {
-        console.error("[ContratoSection] Falha ao salvar cópia no Storage", uploadErr);
-      }
       await onAtualizado();
-    } catch {
-      setErro("Não foi possível gerar a nova versão do contrato.");
+    } catch (error) {
+      console.error("[PDF] Falha ao gerar nova versão do contrato", error);
+      setErro("Não foi possível gerar a nova versão do contrato. Verifique sua conexão e tente novamente.");
     } finally {
       setCarregando(null);
       setConfirmRegenerar(false);
@@ -160,8 +209,9 @@ export default function ContratoSection({
     try {
       const url = await gerarUrlAssinada(contrato.assinadoArquivoCaminho);
       window.open(url, "_blank");
-    } catch {
-      setErro("Não foi possível abrir o contrato assinado.");
+    } catch (error) {
+      console.error("[PDF] Falha ao abrir contrato assinado", error);
+      setErro("Não foi possível abrir o contrato assinado. Verifique sua conexão e tente novamente.");
     } finally {
       setCarregando(null);
     }
