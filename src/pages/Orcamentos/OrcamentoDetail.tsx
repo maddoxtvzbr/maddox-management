@@ -7,10 +7,11 @@ import {
   Clock,
   Pencil,
   MessageCircle,
-  CheckCircle2
+  CheckCircle2,
+  Trash2
 } from "lucide-react";
 import type { Orcamento } from "../../types";
-import { fecharOrcamento, marcarNaoFechou } from "../../data/orcamentosRepository";
+import { fecharOrcamento, marcarNaoFechou, excluirOrcamento } from "../../data/orcamentosRepository";
 import { formatCurrencyBRL, formatDateShort, buildWhatsAppLink } from "../../lib/format";
 import ConfirmSheet from "../../components/ConfirmSheet";
 
@@ -42,6 +43,7 @@ interface OrcamentoDetailProps {
   onAtualizado: () => Promise<void> | void;
   onCompletarFechamento: () => void;
   onVerEvento: (eventoId: string) => void;
+  onExcluido: () => void;
 }
 
 export default function OrcamentoDetail({
@@ -50,12 +52,15 @@ export default function OrcamentoDetail({
   onEditar,
   onAtualizado,
   onCompletarFechamento,
-  onVerEvento
+  onVerEvento,
+  onExcluido
 }: OrcamentoDetailProps) {
   const [confirmFechar, setConfirmFechar] = useState(false);
   const [confirmNaoFechou, setConfirmNaoFechou] = useState(false);
   const [motivo, setMotivo] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [confirmExcluir, setConfirmExcluir] = useState(false);
+  const [excluindo, setExcluindo] = useState(false);
 
   const whatsappLink = buildWhatsAppLink(orcamento.telefone);
 
@@ -81,6 +86,18 @@ export default function OrcamentoDetail({
       setSaving(false);
       setConfirmNaoFechou(false);
       setMotivo(null);
+    }
+  }
+
+  async function confirmarExcluir() {
+    if (excluindo) return; // evita duplo toque
+    setExcluindo(true);
+    try {
+      await excluirOrcamento(orcamento.id);
+      onExcluido();
+    } finally {
+      setExcluindo(false);
+      setConfirmExcluir(false);
     }
   }
 
@@ -173,6 +190,25 @@ export default function OrcamentoDetail({
             <p className="detail-obs-text">{orcamento.motivoNaoFechou}</p>
           </section>
         )}
+
+        <section className="section-block">
+          <p className="section-title">Gerenciar orçamento</p>
+          {orcamento.eventId ? (
+            <p className="field-hint">
+              Este orçamento já gerou um evento. Para excluir, cancele ou exclua o evento
+              correspondente.
+            </p>
+          ) : (
+            <button
+              type="button"
+              className="btn-secondary tone-negative"
+              onClick={() => setConfirmExcluir(true)}
+            >
+              <Trash2 size={16} strokeWidth={1.9} />
+              Excluir orçamento
+            </button>
+          )}
+        </section>
       </div>
 
       {orcamento.status === "aberto" && (
@@ -247,6 +283,17 @@ export default function OrcamentoDetail({
           ))}
         </div>
       </ConfirmSheet>
+
+      <ConfirmSheet
+        open={confirmExcluir}
+        title="Excluir este orçamento?"
+        description="Esta ação não pode ser desfeita. O orçamento sai da lista e do histórico definitivamente."
+        confirmLabel="Excluir"
+        tone="negative"
+        confirming={excluindo}
+        onCancel={() => setConfirmExcluir(false)}
+        onConfirm={confirmarExcluir}
+      />
     </div>
   );
 }
