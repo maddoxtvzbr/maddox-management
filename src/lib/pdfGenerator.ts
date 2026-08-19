@@ -3,78 +3,52 @@ import { montarDocDefinition, type DadosGeracaoContrato } from "./contratoPdf";
 // pdfmake é carregado sob demanda (só quando o usuário realmente gera/visualiza
 // um contrato) para não pesar o carregamento inicial do app.
 //
-// IMPORTANTE (causa do bug corrigido nesta etapa): depender só de
-// "pdfMake.vfs = ..." como efeito global é frágil em builds via Vite — o
-// formato exato do módulo "pdfmake/build/vfs_fonts" varia entre versões, e
-// se nenhum dos formatos testados bater, o vfs ficava vazio SEM avisar
-// ninguém, e a geração do PDF falhava sempre (para qualquer contrato), pois
-// a fonte "Roboto" não conseguia ser encontrada.
+// IMPORTANTE (causa raiz do bug "Não foi possível carregar as fontes do
+// PDF."): a etapa anterior tentava obter as fontes Roboto importando
+// "pdfmake/build/vfs_fonts", um arquivo legado (CommonJS/UMD) da própria
+// biblioteca. O formato exportado por esse arquivo não é estável entre
+// bundlers/versões, e no build de produção do Vite (diferente do modo dev)
+// ele resultava num objeto vazio — por isso o erro só aparecia no site
+// publicado, nunca em teste local.
 //
-// A correção: 1) se o vfs não puder ser resolvido, falha alto e claro em vez
-// de silenciosamente seguir em frente; 2) em vez de confiar só na atribuição
-// global, passamos "fonts" e "vfs" diretamente em cada chamada de
-// createPdf() — assinatura oficial createPdf(doc, tableLayouts, fonts, vfs),
-// que é a forma mais robusta em bundlers como o Vite.
-
+// A correção definitiva: usar o carregamento de fontes "via URL", recurso
+// oficial do pdfmake (documentado desde a versão 0.1.66). Em vez de embutir
+// as fontes no bundle, o pdfmake baixa os arquivos .ttf por HTTP na hora de
+// gerar o PDF. Isso elimina por completo a dependência do módulo problemático.
 const FONTES_PADRAO = {
   Roboto: {
-    normal: "Roboto-Regular.ttf",
-    bold: "Roboto-Medium.ttf",
-    italics: "Roboto-Italic.ttf",
-    bolditalics: "Roboto-MediumItalic.ttf"
+    normal: "https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.3.3/fonts/Roboto/Roboto-Regular.ttf",
+    bold: "https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.3.3/fonts/Roboto/Roboto-Medium.ttf",
+    italics: "https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.3.3/fonts/Roboto/Roboto-Italic.ttf",
+    bolditalics: "https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.3.3/fonts/Roboto/Roboto-MediumItalic.ttf"
   }
 };
 
-interface PdfMakeCarregado {
-  pdfMake: any;
-  vfs: Record<string, string>;
-}
+let cache: any | null = null;
 
-let cache: PdfMakeCarregado | null = null;
-
-async function carregarPdfMake(): Promise<PdfMakeCarregado> {
+async function carregarPdfMake(): Promise<any> {
   if (cache) return cache;
 
   let pdfMakeModule: unknown;
-  let pdfFontsModule: unknown;
   try {
-    [pdfMakeModule, pdfFontsModule] = await Promise.all([
-      import("pdfmake/build/pdfmake"),
-      import("pdfmake/build/vfs_fonts")
-    ]);
+    pdfMakeModule = await import("pdfmake/build/pdfmake");
   } catch (error) {
     console.error("[PDF][LOAD_LIBRARY]", error);
     throw new Error("Não foi possível carregar a biblioteca de geração de PDF.");
   }
 
   const pdfMake = (pdfMakeModule as any)?.default ?? pdfMakeModule;
-  const fonts = pdfFontsModule as any;
-
-  const vfs =
-    fonts?.vfs ??
-    fonts?.default?.vfs ??
-    fonts?.pdfMake?.vfs ??
-    fonts?.default?.pdfMake?.vfs;
-
-  if (!vfs || typeof vfs !== "object" || Object.keys(vfs).length === 0) {
-    // Este é o ponto exato que antes falhava silenciosamente. Agora falha
-    // alto, com contexto suficiente no console para diagnosticar.
-    console.error("[PDF][VFS_FONTS]", "vfs de fontes vazio ou em formato inesperado", {
-      chavesDoModuloDeFontes: fonts ? Object.keys(fonts) : null
-    });
-    throw new Error("Não foi possível carregar as fontes do PDF.");
+  if (!pdfMake || typeof pdfMake.createPdf !== "function") {
+    console.error("[PDF][LOAD_LIBRARY]", "módulo pdfmake carregado em formato inesperado", pdfMakeModule);
+    throw new Error("Não foi possível carregar a biblioteca de geração de PDF.");
   }
 
-  // Mantém a atribuição global também, por compatibilidade — mas a geração
-  // em si não depende mais só dela (ver createPdf abaixo).
-  pdfMake.vfs = vfs;
-
-  cache = { pdfMake, vfs };
+  cache = pdfMake;
   return cache;
 }
 
 export async function gerarContratoPdfBlob(dados: DadosGeracaoContrato): Promise<Blob> {
-  const { pdfMake, vfs } = await carregarPdfMake();
+  const pdfMake = await carregarPdfMake();
 
   let docDefinition: ReturnType<typeof montarDocDefinition>;
   try {
@@ -99,11 +73,11 @@ export async function gerarContratoPdfBlob(dados: DadosGeracaoContrato): Promise
     }
 
     try {
-      // 4 argumentos: docDefinition, tableLayouts (não usamos), fonts, vfs.
-      // Passar fonts/vfs explicitamente aqui é mais confiável do que confiar
-      // apenas em "pdfMake.vfs" ter sido setado globalmente.
+      // 3º argumento "fonts": passa a configuração de fontes por URL direto
+      // nesta chamada (em vez de depender de "pdfMake.vfs" setado global).
+      // O pdfmake baixa os .ttf sozinho na hora de montar o PDF.
       pdfMake
-        .createPdf(docDefinition, undefined, FONTES_PADRAO, vfs)
+        .createPdf(docDefinition, undefined, FONTES_PADRAO)
         .getBlob((blobGerado: Blob) => {
           finalizar(() => resolve(blobGerado));
         });
