@@ -27,11 +27,18 @@ export async function enviarContratoOriginal(
 ): Promise<string> {
   const userId = await usuarioAtualId();
   const path = caminhoOriginal(userId, eventoId, contratoId);
+  // eslint-disable-next-line no-console
+  console.log("[PDF] PDF_UPLOAD_START", { path, size: blob.size });
   const { error } = await supabase.storage.from(BUCKET).upload(path, blob, {
     contentType: "application/pdf",
     upsert: true
   });
-  if (error) throw error;
+  if (error) {
+    console.error("[PDF] Falha no upload do PDF original", error);
+    throw error;
+  }
+  // eslint-disable-next-line no-console
+  console.log("[PDF] PDF_UPLOAD_OK", { path });
   return path;
 }
 
@@ -65,7 +72,17 @@ export async function gerarUrlAssinada(path: string, segundosValidade = 300): Pr
 }
 
 export async function baixarArquivoDoStorage(path: string): Promise<Blob> {
+  // eslint-disable-next-line no-console
+  console.log("[PDF] PDF_DOWNLOAD_START", { path });
   const { data, error } = await supabase.storage.from(BUCKET).download(path);
-  if (error) throw error;
+  if (error) {
+    console.error("[PDF] Falha ao baixar arquivo do Storage", error);
+    throw error;
+  }
+  if (!data || data.size === 0) {
+    throw new Error("Arquivo baixado está vazio.");
+  }
+  // eslint-disable-next-line no-console
+  console.log("[PDF] PDF_DOWNLOAD_OK", { path, size: data.size });
   return data;
 }
