@@ -149,6 +149,10 @@ export default function Orcamentos({ onOpenEvento }: OrcamentosProps) {
         onAtualizado={reload}
         onCompletarFechamento={() => setView({ name: "fechamento", id: atual.id })}
         onVerEvento={onOpenEvento}
+        onExcluido={async () => {
+          await reload();
+          setView({ name: "list" });
+        }}
       />
     </div>
   );
