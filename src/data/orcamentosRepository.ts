@@ -132,3 +132,11 @@ export async function linkEvento(id: string, eventId: string): Promise<Orcamento
   if (error) throw error;
   return fromRow(data);
 }
+
+// Exclusão definitiva do orçamento. Só é chamada depois que a tela já
+// conferiu que ele não gerou evento (ver validarExclusaoOrcamento) — aqui
+// fica só a operação em si, sem lógica de negócio.
+export async function excluirOrcamento(id: string): Promise<void> {
+  const { error } = await supabase.from("quotes").delete().eq("id", id);
+  if (error) throw error;
+}
