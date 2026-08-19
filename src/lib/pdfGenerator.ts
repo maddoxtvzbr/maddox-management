@@ -37,13 +37,11 @@ export async function gerarContratoPdfBlob(dados: DadosGeracaoContrato): Promise
   const pdfMake = await carregarPdfMake();
   const docDefinition = montarDocDefinition(dados);
 
-  return new Promise((resolve, reject) => {
+  const blob = await new Promise<Blob>((resolve, reject) => {
     // getBlob só tem callback de sucesso — se o pdfmake falhar internamente
-    // sem lançar uma exceção síncrona (o que já aconteceu em produção), a
-    // Promise nunca resolveria nem rejeitaria, travando para sempre quem
-    // estiver esperando (ex: botão "Compartilhar PDF" preso em "Preparando...").
-    // Este timeout garante que a Promise SEMPRE se resolve de um jeito ou de
-    // outro, então quem chamou nunca fica travado.
+    // sem lançar uma exceção síncrona, a Promise nunca resolveria nem
+    // rejeitaria, travando para sempre quem estiver esperando. Este timeout
+    // garante que a Promise SEMPRE se resolve de um jeito ou de outro.
     const tempoLimite = setTimeout(() => {
       reject(new Error("Tempo esgotado ao gerar o PDF do contrato."));
     }, 20000);
@@ -54,11 +52,20 @@ export async function gerarContratoPdfBlob(dados: DadosGeracaoContrato): Promise
     }
 
     try {
-      pdfMake.createPdf(docDefinition).getBlob((blob: Blob) => {
-        finalizar(() => resolve(blob));
+      pdfMake.createPdf(docDefinition).getBlob((blobGerado: Blob) => {
+        finalizar(() => resolve(blobGerado));
       });
     } catch (error) {
       finalizar(() => reject(error));
     }
   });
+
+  if (!blob || blob.size === 0) {
+    throw new Error("O PDF gerado está vazio ou corrompido.");
+  }
+
+  // eslint-disable-next-line no-console
+  console.log("[PDF] PDF_GENERATED", { size: blob.size, type: blob.type });
+
+  return blob;
 }
