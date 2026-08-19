@@ -1,0 +1,24 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+# SPA: o app não usa rotas com URLs próprias (é tudo dentro de "/"), mas
+# este fallback garante que qualquer recarregamento/link nunca caia em 404 —
+# tudo que não for um arquivo real do build volta para o index.html.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# O service worker e o manifest nunca devem ficar presos em cache do
+# navegador/CDN por muito tempo — senão o aviso "Nova versão disponível"
+# pode demorar a aparecer depois de um novo deploy.
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/manifest.webmanifest"
+  [headers.values]
+    Cache-Control = "no-cache"
