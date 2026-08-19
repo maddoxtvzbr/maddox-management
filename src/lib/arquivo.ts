@@ -12,33 +12,39 @@ export function sanitizarNomeArquivo(nome: string): string {
     .replace(/^-|-$/g, "");
 }
 
-export type ResultadoCompartilhamento = "compartilhado" | "cancelado" | "indisponivel";
+export type ResultadoCompartilhamento = "compartilhado" | "cancelado" | "indisponivel" | "erro";
 
 // Tenta abrir a folha de compartilhamento nativa (WhatsApp, e-mail, etc).
-// Retorna "indisponivel" quando o navegador não suporta compartilhar
-// arquivos — quem chamar deve então oferecer baixar/abrir como alternativa.
+// - "indisponivel": navegador não suporta compartilhar arquivos (nada deu
+//   errado, só não existe a API) — quem chamar deve cair para baixar/abrir
+//   silenciosamente, sem mostrar mensagem de erro.
+// - "cancelado": o próprio usuário fechou a folha de compartilhamento.
+// - "erro": o compartilhamento foi tentado e falhou de verdade — quem
+//   chamar deve avisar o usuário E oferecer baixar/abrir como alternativa.
 export async function compartilharArquivo(
   blob: Blob,
   nomeArquivo: string,
-  titulo: string
+  titulo: string,
+  texto?: string
 ): Promise<ResultadoCompartilhamento> {
-  try {
-    const file = new File([blob], nomeArquivo, { type: "application/pdf" });
-    const nav = navigator as Navigator & {
-      canShare?: (data: { files: File[] }) => boolean;
-      share?: (data: { files: File[]; title?: string }) => Promise<void>;
-    };
+  const file = new File([blob], nomeArquivo, { type: "application/pdf" });
+  const nav = navigator as Navigator & {
+    canShare?: (data: { files: File[] }) => boolean;
+    share?: (data: { files: File[]; title?: string; text?: string }) => Promise<void>;
+  };
 
-    if (nav.canShare && nav.share && nav.canShare({ files: [file] })) {
-      await nav.share({ files: [file], title: titulo });
-      return "compartilhado";
-    }
+  if (!nav.canShare || !nav.share || !nav.canShare({ files: [file] })) {
     return "indisponivel";
+  }
+
+  try {
+    await nav.share({ files: [file], title: titulo, text: texto });
+    return "compartilhado";
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
       return "cancelado";
     }
-    return "indisponivel";
+    return "erro";
   }
 }
 
